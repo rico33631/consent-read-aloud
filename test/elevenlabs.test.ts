@@ -70,6 +70,36 @@ test("gives up after one retry and reports a clean error", async () => {
   assert.equal(calls.length, 2);
 });
 
+test("caps a long Retry-After at 10s", async () => {
+  const sleeps: number[] = [];
+  const { fetch } = stubFetch([
+    () => new Response("rate limited", { status: 429, headers: { "retry-after": "120" } }),
+    () => audioResponse(),
+  ]);
+  const client = createElevenLabsClient({ apiKey: "k", fetch, sleep: async (ms) => void sleeps.push(ms), log: quiet });
+
+  await client.synthesize(request);
+  assert.deepEqual(sleeps, [10_000]);
+});
+
+test("falls back to the default backoff for a non-numeric Retry-After", async () => {
+  const sleeps: number[] = [];
+  const { fetch } = stubFetch([
+    () => new Response("rate limited", { status: 429, headers: { "retry-after": "Wed, 21 Oct 2026 07:28:00 GMT" } }),
+    () => audioResponse(),
+  ]);
+  const client = createElevenLabsClient({
+    apiKey: "k",
+    fetch,
+    retryDelayMs: 250,
+    sleep: async (ms) => void sleeps.push(ms),
+    log: quiet,
+  });
+
+  await client.synthesize(request);
+  assert.deepEqual(sleeps, [250]);
+});
+
 test("does not retry on 4xx such as a bad key", async () => {
   const { fetch, calls } = stubFetch([() => new Response('{"detail":"invalid api key"}', { status: 401 })]);
   const client = createElevenLabsClient({ apiKey: "nope", fetch, sleep: noSleep, log: quiet });
@@ -82,6 +112,38 @@ test("does not retry on 4xx such as a bad key", async () => {
   assert.equal(calls.length, 1);
 });
 
+test("keeps the upstream error body in the server log, not in the client message", async () => {
+  const body = '{"detail":{"status":"quota_exceeded","message":"You have 42 credits remaining"}}';
+  const { fetch } = stubFetch([() => new Response(body, { status: 401 })]);
+  const logged: string[] = [];
+  const client = createElevenLabsClient({ apiKey: "k", fetch, sleep: noSleep, log: (m) => void logged.push(m) });
+
+  await assert.rejects(client.synthesize(request), (error: unknown) => {
+    assert.ok(error instanceof HttpError);
+    assert.equal(error.status, 502);
+    assert.equal(error.code, "upstream_error");
+    assert.doesNotMatch(error.message, /quota|credits|401/);
+    return true;
+  });
+  assert.ok(logged.some((m) => m.includes("quota_exceeded")));
+});
+
+test("does not echo network error details to the client", async () => {
+  const fetch = (async () => {
+    throw new Error("getaddrinfo ENOTFOUND api.elevenlabs.io");
+  }) as typeof globalThis.fetch;
+  const logged: string[] = [];
+  const client = createElevenLabsClient({ apiKey: "k", fetch, sleep: noSleep, log: (m) => void logged.push(m) });
+
+  await assert.rejects(client.synthesize(request), (error: unknown) => {
+    assert.ok(error instanceof HttpError);
+    assert.equal(error.code, "upstream_unreachable");
+    assert.doesNotMatch(error.message, /getaddrinfo|ENOTFOUND/);
+    return true;
+  });
+  assert.ok(logged.some((m) => m.includes("ENOTFOUND")));
+});
+
 test("aborts a hung request after the timeout", async () => {
   const fetch = ((_url: string, init?: RequestInit) =>
     new Promise<Response>((_resolve, reject) => {
@@ -92,6 +154,27 @@ test("aborts a hung request after the timeout", async () => {
   await assert.rejects(client.synthesize(request), (error: unknown) => {
     assert.ok(error instanceof HttpError);
     assert.equal(error.status, 504);
+    return true;
+  });
+});
+
+test("times out when the audio body stalls after the headers", async () => {
+  // Headers arrive, one chunk is sent, then the stream never closes.
+  const fetch = (async () =>
+    new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array([0xff, 0xfb]));
+        },
+      }),
+      { status: 200, headers: { "content-type": "audio/mpeg" } },
+    )) as typeof globalThis.fetch;
+  const client = createElevenLabsClient({ apiKey: "k", fetch, timeoutMs: 20, sleep: noSleep, log: quiet });
+
+  await assert.rejects(client.synthesize(request), (error: unknown) => {
+    assert.ok(error instanceof HttpError);
+    assert.equal(error.status, 504);
+    assert.equal(error.code, "upstream_timeout");
     return true;
   });
 });

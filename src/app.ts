@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import path from "node:path";
 import type { AudioCache } from "./audioCache.js";
 import { isLanguage, type Config, type Language } from "./config.js";
+import { cacheKey } from "./cacheKey.js";
 import { toSpeechText, type FormStore } from "./forms.js";
 import { HttpError } from "./tts.js";
 
@@ -38,8 +39,21 @@ function parseLang(url: URL): Language | undefined {
   return isLanguage(lang) ? lang : undefined;
 }
 
+function matchesEtag(header: string | undefined, etag: string): boolean {
+  if (!header) return false;
+  return header.split(",").some((tag) => {
+    const value = tag.trim();
+    return value === "*" || value.replace(/^W\//, "") === etag;
+  });
+}
+
 async function serveStatic(publicDir: string, pathname: string, res: ServerResponse): Promise<boolean> {
-  const relative = pathname === "/" ? "index.html" : decodeURIComponent(pathname).replace(/^\/+/, "");
+  let relative: string;
+  try {
+    relative = pathname === "/" ? "index.html" : decodeURIComponent(pathname).replace(/^\/+/, "");
+  } catch {
+    return false; // malformed percent-encoding: answer 404, not 500
+  }
   const file = path.resolve(publicDir, relative);
   if (file !== publicDir && !file.startsWith(publicDir + path.sep)) return false; // path traversal
   try {
@@ -88,15 +102,25 @@ export function createApp(deps: AppDeps): Server {
             "ELEVENLABS_API_KEY is not set. Add it to .env, or set ELEVENLABS_MOCK=1 to use silent mock audio.",
           );
         }
+        // The URL has no version in it, so browsers must revalidate. The ETag is the cache key,
+        // which changes with the text, voice and model; a matching If-None-Match gets a 304.
+        const tts = { text: toSpeechText(form), voiceId: config.voiceIds[lang], modelId: config.modelId };
+        const etag = `"${cacheKey(tts.text, tts.voiceId, tts.modelId)}"`;
+        const cacheHeaders = { etag, "cache-control": "private, no-cache", "x-form-version": form.version };
+        if (matchesEtag(req.headers["if-none-match"], etag)) {
+          log(`audio ${form.id}@${form.version} ${lang} 304 key=${etag.slice(1, 13)}`);
+          res.writeHead(304, { ...cacheHeaders, "x-cache": "HIT" });
+          res.end();
+          return;
+        }
         const started = Date.now();
-        const result = await cache.get({ text: toSpeechText(form), voiceId: config.voiceIds[lang], modelId: config.modelId });
+        const result = await cache.get(tts);
         log(`audio ${form.id}@${form.version} ${lang} ${result.status}${result.joined ? " (joined in-flight)" : ""} ${Date.now() - started}ms key=${result.key.slice(0, 12)}`);
         res.writeHead(200, {
+          ...cacheHeaders,
           "content-type": "audio/mpeg",
           "content-length": result.audio.length,
           "x-cache": result.status,
-          "x-form-version": form.version,
-          "cache-control": "public, max-age=86400",
         });
         res.end(req.method === "HEAD" ? undefined : result.audio);
         return;

@@ -9,6 +9,7 @@
   --accent-soft: #e3ece7;
   --on-accent: #ffffff;
   --focus: #b8860b;
+  --danger: #b3261e;
   --radius: 14px;
   --tap: 48px;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -27,6 +28,7 @@
     --accent-soft: #24332e;
     --on-accent: #10201a;
     --focus: #e6b84f;
+    --danger: #f2b8b5;
     color-scheme: dark;
   }
 }
@@ -100,10 +102,8 @@ h1 {
   color: var(--muted);
 }
 
+/* Sticky only on wider screens: on a phone the stacked card would cover most of the text. */
 .controls {
-  position: sticky;
-  top: 0;
-  z-index: 5;
   display: grid;
   gap: 1rem;
   margin: 1rem 0 1.5rem;
@@ -246,7 +246,7 @@ audio {
   color: var(--accent-strong);
 }
 .status.error {
-  color: #b3261e;
+  color: var(--danger);
 }
 
 .consent {
@@ -292,11 +292,18 @@ audio {
 
 @media (min-width: 40rem) {
   .controls {
+    position: sticky;
+    top: 0;
+    z-index: 5;
     grid-template-columns: 1fr 1fr;
     align-items: end;
   }
   .player {
     grid-column: 1 / -1;
+  }
+  /* Keep the skip link target clear of the sticky card. */
+  .consent {
+    scroll-margin-top: 16rem;
   }
 }
 

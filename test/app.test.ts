@@ -7,6 +7,7 @@ import { createApp } from "../src/app.js";
 import { loadConfig } from "../src/config.js";
 import { FormStore } from "../src/forms.js";
 import { createMockProvider } from "../src/mock.js";
+import { HttpError } from "../src/tts.js";
 import { tempDir } from "./helpers.js";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
@@ -15,6 +16,7 @@ const quiet = () => {};
 
 let base: string;
 let noKeyBase: string;
+let failingBase: string;
 const closers: Array<() => Promise<unknown>> = [];
 
 async function start(server: ReturnType<typeof createApp>): Promise<string> {
@@ -30,6 +32,16 @@ before(async () => {
   const cache = new AudioCache(dir, createMockProvider({ delayMs: 5 }));
   base = await start(createApp({ config, forms, cache, publicDir: `${root}public`, log: quiet }));
   noKeyBase = await start(createApp({ config, forms, cache: undefined, publicDir: `${root}public`, log: quiet }));
+  const failing = await tempDir();
+  closers.push(failing.cleanup);
+  const timeoutProvider = {
+    async synthesize(): Promise<Buffer> {
+      throw new HttpError(504, "ElevenLabs did not respond within 20 ms", "upstream_timeout");
+    },
+  };
+  failingBase = await start(
+    createApp({ config, forms, cache: new AudioCache(failing.dir, timeoutProvider), publicDir: `${root}public`, log: quiet }),
+  );
 });
 
 after(async () => {
@@ -68,7 +80,32 @@ test("GET /api/forms/:id/audio returns MP3, MISS then HIT", async () => {
   await second.arrayBuffer();
 });
 
-test("audio without a key (and mock off) is a clear JSON error", async () => {
+test("audio is revalidated with an ETag so a new form version is never served stale", async () => {
+  const res = await fetch(`${base}/api/forms/standing-sedation/audio?lang=de`);
+  await res.arrayBuffer();
+  const etag = res.headers.get("etag");
+  assert.match(etag ?? "", /^"[0-9a-f]{64}"$/);
+  assert.equal(res.headers.get("cache-control"), "private, no-cache");
+
+  const again = await fetch(`${base}/api/forms/standing-sedation/audio?lang=de`, { headers: { "if-none-match": etag! } });
+  assert.equal(again.status, 304);
+  assert.equal(again.headers.get("x-cache"), "HIT");
+  await again.arrayBuffer();
+
+  // A different version's tag (here: another language's audio) does not match.
+  const stale = await fetch(`${base}/api/forms/standing-sedation/audio?lang=en`, { headers: { "if-none-match": etag! } });
+  assert.equal(stale.status, 200);
+  await stale.arrayBuffer();
+});
+
+test("an upstream failure reaches the browser as JSON with its status and code", async () => {
+  const res = await fetch(`${failingBase}/api/forms/standing-sedation/audio?lang=en`);
+  assert.equal(res.status, 504);
+  const body = (await res.json()) as { error: { code: string } };
+  assert.equal(body.error.code, "upstream_timeout");
+});
+
+test("audio with audio disabled (no cache configured) is a clear JSON error", async () => {
   const res = await fetch(`${noKeyBase}/api/forms/standing-sedation/audio?lang=en`);
   assert.equal(res.status, 503);
   const body = (await res.json()) as { error: { code: string; message: string } };
@@ -83,4 +120,11 @@ test("serves the static page and blocks path traversal", async () => {
   const sneaky = await fetch(`${base}/..%2Fpackage.json`);
   assert.equal(sneaky.status, 404);
   await sneaky.text();
+});
+
+test("a malformed percent-encoded path is a 404, not a server error", async () => {
+  const res = await fetch(`${base}/%E0%A4%A`);
+  assert.equal(res.status, 404);
+  const body = (await res.json()) as { error: { code: string } };
+  assert.equal(body.error.code, "not_found");
 });

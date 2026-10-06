@@ -10,7 +10,7 @@ export interface CachedAudio {
   key: string;
   audio: Buffer;
   status: CacheStatus;
-  /** True when this request joined a generation another request had already started. */
+  /** True when this request joined a lookup (disk read, then generation) another request had already started. */
   joined: boolean;
 }
 
@@ -18,11 +18,13 @@ export interface CachedAudio {
  * Disk cache in front of a TTS provider.
  * - Hit: the file cache/<key>.mp3 exists and is served as-is.
  * - Miss: one provider call, written atomically (temp file + rename).
- * - Concurrent misses for the same key share one in-flight promise, so a burst of
- *   owners opening the same form triggers exactly one upstream call.
+ * - Concurrent requests for the same key share one in-flight lookup (disk read, then
+ *   generation if needed), so a burst of owners opening the same form triggers exactly
+ *   one upstream call. The entry is registered before the first await and removed only
+ *   after the file is in place, so a later request either joins it or finds the file.
  */
 export class AudioCache {
-  private readonly inFlight = new Map<string, Promise<Buffer>>();
+  private readonly inFlight = new Map<string, Promise<{ audio: Buffer; status: CacheStatus }>>();
 
   constructor(
     private readonly dir: string,
@@ -36,19 +38,23 @@ export class AudioCache {
   async get(request: TtsRequest): Promise<CachedAudio> {
     const key = cacheKey(request.text, request.voiceId, request.modelId);
 
-    const existing = await this.read(key);
-    if (existing) return { key, audio: existing, status: "HIT", joined: false };
-
     let pending = this.inFlight.get(key);
     const joined = pending !== undefined;
     if (!pending) {
-      pending = this.generate(key, request).finally(() => this.inFlight.delete(key));
+      pending = this.load(key, request).finally(() => this.inFlight.delete(key));
       this.inFlight.set(key, pending);
     }
-    return { key, audio: await pending, status: "MISS", joined };
+    const { audio, status } = await pending;
+    return { key, audio, status, joined };
   }
 
-  private async read(key: string): Promise<Buffer | undefined> {
+  private async load(key: string, request: TtsRequest): Promise<{ audio: Buffer; status: CacheStatus }> {
+    const existing = await this.read(key);
+    if (existing) return { audio: existing, status: "HIT" };
+    return { audio: await this.generate(key, request), status: "MISS" };
+  }
+
+  protected async read(key: string): Promise<Buffer | undefined> {
     try {
       return await readFile(this.filePath(key));
     } catch (error) {

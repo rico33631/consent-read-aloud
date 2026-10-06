@@ -8,8 +8,6 @@ Equine vets often ask horse owners to sign consent forms on a phone, standing in
 
 Consent text changes rarely and is read by many owners, so it is a good fit for caching. Each form version is turned into speech once, saved to disk, and served from there afterwards. If ten owners open the same new form at the same moment, the app still makes a single API call.
 
-> Screenshot: add one at `docs/screenshot.png` after running the app locally, then reference it here.
-
 ## Run it
 
 Requires Node 20.12 or newer.
@@ -43,9 +41,10 @@ For production: `npm run build && npm start`.
 - **Key.** `sha256(text, voiceId, modelId)`. The text includes the form title and body, so editing a form (a new version) produces a new key, and so does changing the voice or model. Old files simply stop being used.
 - **Hit.** If `cache/<key>.mp3` exists it is served directly. Response header `X-Cache: HIT`.
 - **Miss.** The app calls ElevenLabs, writes the MP3 to a temp file and renames it into place, so a half-written file is never served. `X-Cache: MISS`.
-- **Coalescing.** While a key is being generated, its promise sits in an in-flight map. Other requests for the same key wait on that promise instead of calling the API again. Failures are not cached; the next request tries again.
+- **Coalescing.** The whole lookup for a key (disk read, then generation if needed) sits in an in-flight map from the first request until the file is in place. Other requests for the same key wait on that promise instead of calling the API again. Failures are not cached; the next request tries again.
+- **Browsers.** The audio URL has no version in it, so I send `Cache-Control: private, no-cache` with the cache key as the `ETag`. A browser that already has the current audio gets a `304`; after a form changes it gets the new version straight away instead of replaying the old one.
 
-The ElevenLabs client has a timeout (AbortController, 30s by default), retries once on 429 or 5xx (honouring `Retry-After`, capped at 10s), and never logs the API key.
+The ElevenLabs client has a timeout (AbortController, 30s by default) that covers the whole response, body included. It retries once on 429 or 5xx (honouring `Retry-After`, capped at 10s) and never logs the API key. Upstream error details go to the server log only; the page gets a generic message.
 
 ## API
 
@@ -53,7 +52,7 @@ The ElevenLabs client has a timeout (AbortController, 30s by default), retries o
 | --- | --- | --- |
 | GET | `/api/forms` | List of forms with titles, versions and languages |
 | GET | `/api/forms/:id?lang=de\|en` | One form as JSON (`id`, `version`, `language`, `title`, `body`) |
-| GET | `/api/forms/:id/audio?lang=de\|en` | `audio/mpeg`, with `X-Cache: HIT\|MISS` and `X-Form-Version` |
+| GET | `/api/forms/:id/audio?lang=de\|en` | `audio/mpeg`, with `X-Cache: HIT\|MISS`, `X-Form-Version` and an `ETag` (`304` on a matching `If-None-Match`) |
 
 Errors are JSON: `{ "error": { "code": "...", "message": "..." } }`. If no key is set and mock mode is off, the audio endpoint returns `503` with code `missing_api_key`.
 

@@ -1,5 +1,7 @@
 const UI = {
   en: {
+    skip: "Skip to the form text",
+    clinic: "Sample Equine Clinic",
     heading: "Listen to your consent form",
     lede: "Pick a form and a language, then press Listen. You can follow along with the text below.",
     formLabel: "Consent form",
@@ -16,6 +18,8 @@ const UI = {
     footer: "Fictional sample forms for demonstration. Audio generated with ElevenLabs.",
   },
   de: {
+    skip: "Zum Formulartext springen",
+    clinic: "Beispiel-Pferdeklinik",
     heading: "Einverständniserklärung anhören",
     lede: "Wählen Sie ein Formular und eine Sprache und tippen Sie auf Anhören. Den Text können Sie unten mitlesen.",
     formLabel: "Formular",
@@ -98,20 +102,26 @@ function resetAudio() {
 
 async function loadForm() {
   const request = ++state.request;
+  // Until the new form is on screen, Listen would play audio that does not match the text.
+  els.listen.disabled = true;
+  els.article.setAttribute("aria-busy", "true");
   resetAudio();
   setStatus("");
-  const res = await fetch(`/api/forms/${encodeURIComponent(state.formId)}?lang=${state.lang}`);
-  if (request !== state.request) return;
-  if (!res.ok) {
-    setStatus(t("error"), { error: true });
-    return;
+  try {
+    const res = await fetch(`/api/forms/${encodeURIComponent(state.formId)}?lang=${state.lang}`);
+    if (!res.ok) throw new Error(res.statusText);
+    const form = await res.json();
+    if (request !== state.request) return;
+    els.article.lang = form.language;
+    els.title.textContent = form.title;
+    els.version.textContent = `${t("version")} ${form.version}`;
+    renderBody(form.body);
+    els.listen.disabled = false;
+  } catch {
+    if (request === state.request) setStatus(t("error"), { error: true });
+  } finally {
+    if (request === state.request) els.article.removeAttribute("aria-busy");
   }
-  const form = await res.json();
-  els.article.lang = form.language;
-  els.title.textContent = form.title;
-  els.version.textContent = `${t("version")} ${form.version}`;
-  renderBody(form.body);
-  els.listen.disabled = false;
 }
 
 async function listen() {

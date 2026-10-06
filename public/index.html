@@ -11,10 +11,10 @@
     <script src="app.js" type="module" defer></script>
   </head>
   <body>
-    <a class="skip" href="#consent">Skip to the form text</a>
+    <a class="skip" href="#consent" data-i18n="skip">Skip to the form text</a>
 
     <header class="site-header">
-      <p class="eyebrow">Sample Equine Clinic</p>
+      <p class="eyebrow" data-i18n="clinic">Sample Equine Clinic</p>
       <h1 data-i18n="heading">Listen to your consent form</h1>
       <p class="lede" data-i18n="lede">Pick a form and a language, then press Listen. You can follow along with the text below.</p>
     </header>
@@ -32,9 +32,9 @@
           <legend data-i18n="langLabel">Language</legend>
           <div class="segmented">
             <input type="radio" name="lang" id="lang-de" value="de" />
-            <label for="lang-de"><span aria-hidden="true">DE</span> <span class="lang-name">Deutsch</span></label>
+            <label for="lang-de" lang="de"><span aria-hidden="true">DE</span> <span class="lang-name">Deutsch</span></label>
             <input type="radio" name="lang" id="lang-en" value="en" checked />
-            <label for="lang-en"><span aria-hidden="true">EN</span> <span class="lang-name">English</span></label>
+            <label for="lang-en" lang="en"><span aria-hidden="true">EN</span> <span class="lang-name">English</span></label>
           </div>
         </fieldset>
 

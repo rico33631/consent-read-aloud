@@ -61,8 +61,11 @@ test("writes are atomic: only the final .mp3 remains, no temp files", async () =
 test("concurrent misses for the same key make one upstream call (stubbed fetch)", async () => {
   let release!: () => void;
   const gate = new Promise<void>((resolve) => (release = resolve));
+  let entered!: () => void;
+  const upstreamEntered = new Promise<void>((resolve) => (entered = resolve));
   const { fetch, calls } = stubFetch([
     async () => {
+      entered();
       await gate; // hold the upstream call open while other requests arrive
       return audioResponse();
     },
@@ -70,18 +73,45 @@ test("concurrent misses for the same key make one upstream call (stubbed fetch)"
   const cache = new AudioCache(dir, createElevenLabsClient({ apiKey: "test-key", fetch, sleep: noSleep }));
 
   const burst = Array.from({ length: 5 }, () => cache.get(request));
-  await new Promise((resolve) => setImmediate(resolve));
+  await upstreamEntered;
+  assert.equal(calls.length, 1); // the upstream call really is open while we hold the gate
   release();
   const results = await Promise.all(burst);
 
   assert.equal(calls.length, 1);
-  assert.equal(results.filter((r) => !r.joined).length, 1);
+  assert.equal(results.filter((r) => r.joined).length, 4);
   for (const result of results) {
     assert.equal(result.status, "MISS");
     assert.deepEqual(result.audio, MP3_BYTES);
   }
   assert.equal((await cache.get(request)).status, "HIT");
   assert.equal(calls.length, 1);
+});
+
+test("a request whose disk check is slow still joins instead of calling upstream again", async () => {
+  // Simulates a readFile that started just before another request's generation finished.
+  class SlowFirstRead extends AudioCache {
+    private reads = 0;
+    protected override async read(key: string): Promise<Buffer | undefined> {
+      const result = await super.read(key);
+      if (this.reads++ === 0) await new Promise((resolve) => setTimeout(resolve, 60));
+      return result;
+    }
+  }
+  const provider: TtsProvider & { calls: number } = {
+    calls: 0,
+    async synthesize() {
+      provider.calls++;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return MP3_BYTES;
+    },
+  };
+  const cache = new SlowFirstRead(dir, provider);
+
+  const results = await Promise.all([cache.get(request), cache.get(request)]);
+
+  assert.equal(provider.calls, 1);
+  assert.equal(results.filter((r) => r.joined).length, 1);
 });
 
 test("a failed generation is not cached and the next request retries", async () => {
