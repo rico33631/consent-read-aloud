@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Consent Read-Aloud</title>
+    <meta name="description" content="Listen to a veterinary consent form in German or English." />
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css" />
+    <script src="app.js" type="module" defer></script>
+  </head>
+  <body>
+    <a class="skip" href="#consent">Skip to the form text</a>
+
+    <header class="site-header">
+      <p class="eyebrow">Sample Equine Clinic</p>
+      <h1 data-i18n="heading">Listen to your consent form</h1>
+      <p class="lede" data-i18n="lede">Pick a form and a language, then press Listen. You can follow along with the text below.</p>
+    </header>
+
+    <main>
+      <section class="controls" aria-label="Form and playback">
+        <div class="field">
+          <label for="form-select" data-i18n="formLabel">Consent form</label>
+          <select id="form-select" disabled>
+            <option>Loading…</option>
+          </select>
+        </div>
+
+        <fieldset class="field lang-toggle">
+          <legend data-i18n="langLabel">Language</legend>
+          <div class="segmented">
+            <input type="radio" name="lang" id="lang-de" value="de" />
+            <label for="lang-de"><span aria-hidden="true">DE</span> <span class="lang-name">Deutsch</span></label>
+            <input type="radio" name="lang" id="lang-en" value="en" checked />
+            <label for="lang-en"><span aria-hidden="true">EN</span> <span class="lang-name">English</span></label>
+          </div>
+        </fieldset>
+
+        <div class="player">
+          <button id="listen" class="listen" type="button" disabled>
+            <svg aria-hidden="true" viewBox="0 0 24 24" width="24" height="24"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5Z" fill="currentColor"/></svg>
+            <span data-i18n="listen">Listen</span>
+          </button>
+          <audio id="audio" controls preload="none" hidden></audio>
+          <p id="status" class="status" role="status" aria-live="polite"></p>
+        </div>
+      </section>
+
+      <article id="consent" class="consent" tabindex="-1" aria-labelledby="consent-title">
+        <p class="meta"><span id="consent-version"></span></p>
+        <h2 id="consent-title"></h2>
+        <div id="consent-body"></div>
+      </article>
+    </main>
+
+    <footer class="site-footer">
+      <p data-i18n="footer">Fictional sample forms for demonstration. Audio generated with ElevenLabs.</p>
+    </footer>
+  </body>
+</html>
